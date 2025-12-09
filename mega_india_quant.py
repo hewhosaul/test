@@ -43,6 +43,7 @@ import argparse
 import json
 import pickle
 import asyncio
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Union, Any
 import traceback
@@ -557,13 +558,25 @@ class FeatureEngineeringEngine:
             
             features = df.copy()
             
+            # Ensure timezone-naive index
+            if hasattr(features.index, 'tz') and features.index.tz is not None:
+                features.index = features.index.tz_localize(None)
+            
             # Rolling correlations with market indices
             if market_data is not None and '^GSPC' in market_data:
                 market_returns = market_data['^GSPC']['Close'].pct_change()
+                # Ensure market returns have timezone-naive index
+                if hasattr(market_returns.index, 'tz') and market_returns.index.tz is not None:
+                    market_returns.index = market_returns.index.tz_localize(None)
+                
                 features['Corr_SP500'] = df['Returns'].rolling(60).corr(market_returns)
             
             if market_data is not None and '^IXIC' in market_data:
                 nasdaq_returns = market_data['^IXIC']['Close'].pct_change()
+                # Ensure nasdaq returns have timezone-naive index
+                if hasattr(nasdaq_returns.index, 'tz') and nasdaq_returns.index.tz is not None:
+                    nasdaq_returns.index = nasdaq_returns.index.tz_localize(None)
+                
                 features['Corr_NASDAQ'] = df['Returns'].rolling(60).corr(nasdaq_returns)
             
             # Rolling beta calculation
@@ -577,6 +590,10 @@ class FeatureEngineeringEngine:
             for ticker in semicon_tickers:
                 if market_data is not None and ticker in market_data:
                     semicon_returns = market_data[ticker]['Close'].pct_change()
+                    # Ensure semicon returns have timezone-naive index
+                    if hasattr(semicon_returns.index, 'tz') and semicon_returns.index.tz is not None:
+                        semicon_returns.index = semicon_returns.index.tz_localize(None)
+                    
                     features[f'Corr_{ticker}'] = df['Returns'].rolling(30).corr(semicon_returns)
             
             # PCA-like features (simple implementation)
@@ -589,12 +606,17 @@ class FeatureEngineeringEngine:
             # Cointegration tests (placeholder)
             if market_data is not None and '^NSEI' in market_data:
                 try:
+                    nifty_close = market_data['^NSEI']['Close']
+                    # Ensure nifty close has timezone-naive index
+                    if hasattr(nifty_close.index, 'tz') and nifty_close.index.tz is not None:
+                        nifty_close.index = nifty_close.index.tz_localize(None)
+                    
                     if STATSMODELS_AVAILABLE:
                         features['Cointegration_Nifty'] = self._calculate_cointegration_score(
-                            df['Close'], market_data['^NSEI']['Close']
+                            df['Close'], nifty_close
                         )
-                except:
-                    pass
+                except Exception as inner_e:
+                    self.logger.warning(f"Cointegration calculation failed: {str(inner_e)}")
             
             return features
             
@@ -605,6 +627,15 @@ class FeatureEngineeringEngine:
     def _calculate_rolling_beta(self, stock_returns, market_returns, window=60):
         """Calculate rolling beta coefficient"""
         try:
+            # Ensure timezone-naive indices
+            if hasattr(stock_returns.index, 'tz') and stock_returns.index.tz is not None:
+                stock_returns = stock_returns.copy()
+                stock_returns.index = stock_returns.index.tz_localize(None)
+            
+            if hasattr(market_returns.index, 'tz') and market_returns.index.tz is not None:
+                market_returns = market_returns.copy()
+                market_returns.index = market_returns.index.tz_localize(None)
+            
             # Align the series
             aligned_data = pd.concat([stock_returns, market_returns], axis=1).dropna()
             if len(aligned_data) < window:
@@ -612,19 +643,30 @@ class FeatureEngineeringEngine:
             
             rolling_beta = aligned_data.iloc[:, 0].rolling(window).corr(aligned_data.iloc[:, 1])
             return rolling_beta
-        except:
+        except Exception as e:
+            self.logger.warning(f"Error in rolling beta calculation: {str(e)}")
             return pd.Series(np.nan, index=stock_returns.index)
     
     def _calculate_cointegration_score(self, series1, series2):
         """Calculate cointegration score"""
         try:
+            # Ensure timezone-naive indices
+            if hasattr(series1.index, 'tz') and series1.index.tz is not None:
+                series1 = series1.copy()
+                series1.index = series1.index.tz_localize(None)
+            
+            if hasattr(series2.index, 'tz') and series2.index.tz is not None:
+                series2 = series2.copy()
+                series2.index = series2.index.tz_localize(None)
+            
             if STATSMODELS_AVAILABLE:
                 # Simple correlation as proxy for cointegration
                 correlation = series1.rolling(60).corr(series2)
                 return correlation
             else:
                 return series1.rolling(60).corr(series2)
-        except:
+        except Exception as e:
+            self.logger.warning(f"Error in cointegration score calculation: {str(e)}")
             return pd.Series(np.nan, index=series1.index)
     
     def create_microstructure_features(self, df):
